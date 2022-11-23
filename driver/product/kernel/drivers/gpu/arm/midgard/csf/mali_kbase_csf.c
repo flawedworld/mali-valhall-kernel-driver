@@ -1994,6 +1994,26 @@ bool kbase_csf_error_pending(struct kbase_context *kctx)
 	return event_pended;
 }
 
+static void sync_update_notify_gpu(struct kbase_context *kctx)
+{
+	bool can_notify_gpu;
+	unsigned long flags;
+
+	spin_lock_irqsave(&kctx->kbdev->hwaccess_lock, flags);
+	can_notify_gpu = kctx->kbdev->pm.backend.gpu_powered;
+#ifdef KBASE_PM_RUNTIME
+	if (kctx->kbdev->pm.backend.gpu_sleep_mode_active)
+		can_notify_gpu = false;
+#endif
+
+	if (can_notify_gpu) {
+		kbase_csf_ring_doorbell(kctx->kbdev, CSF_KERNEL_DOORBELL_NR);
+		KBASE_KTRACE_ADD(kctx->kbdev, SYNC_UPDATE_EVENT_NOTIFY_GPU, kctx, 0u);
+	}
+
+	spin_unlock_irqrestore(&kctx->kbdev->hwaccess_lock, flags);
+}
+
 void kbase_csf_event_signal(struct kbase_context *kctx, bool notify_gpu)
 {
 	struct kbase_csf_event *event, *next_event;
@@ -2014,13 +2034,8 @@ void kbase_csf_event_signal(struct kbase_context *kctx, bool notify_gpu)
 	 * synch object wait operations are re-evaluated on a write to any
 	 * CS_DOORBELL/GLB_DOORBELL register.
 	 */
-	if (notify_gpu) {
-		spin_lock_irqsave(&kctx->kbdev->hwaccess_lock, flags);
-		if (kctx->kbdev->pm.backend.gpu_powered)
-			kbase_csf_ring_doorbell(kctx->kbdev, CSF_KERNEL_DOORBELL_NR);
-		KBASE_KTRACE_ADD(kctx->kbdev, SYNC_UPDATE_EVENT_NOTIFY_GPU, kctx, 0u);
-		spin_unlock_irqrestore(&kctx->kbdev->hwaccess_lock, flags);
-	}
+	if (notify_gpu)
+		sync_update_notify_gpu(kctx);
 
 	/* Now invoke the callbacks registered on backend side.
 	 * Allow item removal inside the loop, if requested by the callback.
@@ -2429,10 +2444,12 @@ handle_fault_event(struct kbase_queue *const queue,
 		 kbase_gpu_exception_name(cs_fault_exception_type),
 		 cs_fault_exception_data, cs_fault_info_exception_data);
 
+
 	if (cs_fault_exception_type ==
 	    CS_FAULT_EXCEPTION_TYPE_RESOURCE_EVICTION_TIMEOUT)
 		report_queue_fatal_error(queue, GPU_EXCEPTION_TYPE_SW_FAULT_2,
 					 0, queue->group->handle);
+
 }
 
 /**
@@ -2531,6 +2548,7 @@ handle_fatal_event(struct kbase_queue *const queue,
 		if (!queue_work(queue->kctx->csf.wq, &queue->fatal_event_work))
 			release_queue(queue);
 	}
+
 }
 
 /**

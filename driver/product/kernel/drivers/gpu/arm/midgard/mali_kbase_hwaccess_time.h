@@ -48,3 +48,16 @@ void kbase_backend_get_gpu_time_norequest(struct kbase_device *kbdev,
 					  struct timespec64 *ts);
 
 #endif /* _KBASE_BACKEND_TIME_H_ */
+
+/**
+ * kbase_get_timeout_ms - Choose a timeout value to get a timeout scaled
+ *                        GPU frequency, using a choice from
+ *                        kbase_timeout_selector.
+ *
+ * @kbdev:	KBase device pointer.
+ * @selector:	Value from kbase_scaled_timeout_selector enum.
+ *
+ * Return:	Timeout in milliseconds, as an unsigned integer.
+ */
+unsigned int kbase_get_timeout_ms(struct kbase_device *kbdev,
+				  enum kbase_timeout_selector selector);

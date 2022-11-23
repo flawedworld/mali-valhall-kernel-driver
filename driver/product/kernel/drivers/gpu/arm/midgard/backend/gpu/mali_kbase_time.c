@@ -23,6 +23,7 @@
 #include <mali_kbase_hwaccess_time.h>
 #include <device/mali_kbase_device.h>
 #include <backend/gpu/mali_kbase_pm_internal.h>
+#include <mali_kbase_config_defaults.h>
 
 void kbase_backend_get_gpu_time_norequest(struct kbase_device *kbdev,
 					  u64 *cycle_counter,
@@ -106,4 +107,47 @@ void kbase_backend_get_gpu_time(struct kbase_device *kbdev, u64 *cycle_counter,
 #if !MALI_USE_CSF
 	kbase_pm_release_gpu_cycle_counter(kbdev);
 #endif
+}
+
+unsigned int kbase_get_timeout_ms(struct kbase_device *kbdev,
+				  enum kbase_timeout_selector selector)
+{
+	/* Timeout calculation:
+	 * dividing number of cycles by freq in KHz automatically gives value
+	 * in milliseconds. nr_cycles will have to be multiplied by 1e3 to
+	 * get result in microseconds, and 1e6 to get result in nanoseconds.
+	 */
+
+	u64 timeout, nr_cycles = 0;
+	u64 freq_khz = kbdev->lowest_gpu_freq_khz;
+
+	WARN_ON(!freq_khz);
+
+	switch (selector) {
+	/* use Firmware timeout if invalid selection */
+	default:
+#if !MALI_USE_CSF
+		WARN(1, "Invalid timeout selector used! Using default value");
+		timeout = JM_DEFAULT_TIMEOUT_CYCLES;
+		CSTD_UNUSED(nr_cycles);
+#else
+		WARN(1,
+		     "Invalid timeout selector used! Using CSF Firmware timeout");
+		/* fallthrough */
+	case CSF_FIRMWARE_TIMEOUT:
+		nr_cycles = CSF_FIRMWARE_TIMEOUT_CYCLES;
+		timeout = div_u64(nr_cycles, freq_khz);
+		/* cap CSF FW timeout to FIRMWARE_PING_INTERVAL_MS
+		 * if calculated timeout exceeds it. This should be adapted to a
+		 * direct timeout comparison once the FIRMWARE_PING_INTERVAL_MS
+		 * option is added to this timeout function. A compile-time check
+		 * such as BUILD_BUG_ON can also be done once the firmware ping
+		 * interval in cycles becomes available as a macro.
+		 */
+		if (timeout > FIRMWARE_PING_INTERVAL_MS)
+			timeout = FIRMWARE_PING_INTERVAL_MS;
+#endif
+		break;
+	}
+	return (unsigned int)timeout;
 }

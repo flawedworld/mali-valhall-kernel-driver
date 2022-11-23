@@ -140,7 +140,7 @@
 #define MIPE_HEADER_ENUM_LIST
 #endif
 
-/**
+/*
  * The MIPE tracepoint declaration BLOB.
  */
 const struct

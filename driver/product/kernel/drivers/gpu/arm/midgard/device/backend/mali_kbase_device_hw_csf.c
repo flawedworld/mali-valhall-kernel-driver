@@ -53,7 +53,7 @@ static void kbase_report_gpu_fault(struct kbase_device *kbdev, u32 status,
 	kbase_mmu_gpu_fault_interrupt(kbdev, status, as_nr, address, as_valid);
 }
 
-static bool kbase_gpu_fault_interrupt(struct kbase_device *kbdev)
+static void kbase_gpu_fault_interrupt(struct kbase_device *kbdev)
 {
 	const u32 status = kbase_reg_read(kbdev,
 			GPU_CONTROL_REG(GPU_FAULTSTATUS));
@@ -62,7 +62,6 @@ static bool kbase_gpu_fault_interrupt(struct kbase_device *kbdev)
 			GPU_FAULTSTATUS_JASID_SHIFT;
 	bool bus_fault = (status & GPU_FAULTSTATUS_EXCEPTION_TYPE_MASK) ==
 			GPU_FAULTSTATUS_EXCEPTION_TYPE_GPU_BUS_FAULT;
-	bool clear_gpu_fault = true;
 
 	if (bus_fault) {
 		/* If as_valid, reset gpu when ASID is for MCU. */
@@ -76,21 +75,19 @@ static bool kbase_gpu_fault_interrupt(struct kbase_device *kbdev)
 		} else {
 			/* Handle Bus fault */
 			if (kbase_mmu_bus_fault_interrupt(kbdev, status, as_nr))
-				clear_gpu_fault = false;
+				dev_warn(kbdev->dev,
+					 "fail to handle GPU bus fault ...\n");
 		}
 	} else
 		kbase_report_gpu_fault(kbdev, status, as_nr, as_valid);
 
-	return clear_gpu_fault;
 }
 
 void kbase_gpu_interrupt(struct kbase_device *kbdev, u32 val)
 {
-	bool clear_gpu_fault = false;
-
 	KBASE_KTRACE_ADD(kbdev, CORE_GPU_IRQ, NULL, val);
 	if (val & GPU_FAULT)
-		clear_gpu_fault = kbase_gpu_fault_interrupt(kbdev);
+		kbase_gpu_fault_interrupt(kbdev);
 
 	if (val & GPU_PROTECTED_FAULT) {
 		struct kbase_csf_scheduler *scheduler = &kbdev->csf.scheduler;
@@ -136,6 +133,20 @@ void kbase_gpu_interrupt(struct kbase_device *kbdev, u32 val)
 	KBASE_KTRACE_ADD(kbdev, CORE_GPU_IRQ_CLEAR, NULL, val);
 	kbase_reg_write(kbdev, GPU_CONTROL_REG(GPU_IRQ_CLEAR), val);
 
+#ifdef KBASE_PM_RUNTIME
+	if (val & DOORBELL_MIRROR) {
+		unsigned long flags;
+
+		dev_dbg(kbdev->dev, "Doorbell mirror interrupt received");
+		spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
+		WARN_ON(!kbase_csf_scheduler_get_nr_active_csgs(kbdev));
+		kbase_pm_disable_db_mirror_interrupt(kbdev);
+		kbdev->pm.backend.exit_gpu_sleep_mode = true;
+		kbase_csf_scheduler_invoke_tick(kbdev);
+		spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+	}
+#endif
+
 	/* kbase_pm_check_transitions (called by kbase_pm_power_changed) must
 	 * be called after the IRQ has been cleared. This is because it might
 	 * trigger further power transitions and we don't want to miss the
@@ -160,15 +171,6 @@ void kbase_gpu_interrupt(struct kbase_device *kbdev, u32 val)
 		if (kbdev->pm.backend.l2_always_on ||
 			kbase_hw_has_issue(kbdev, BASE_HW_ISSUE_TTRX_921))
 			kbase_pm_power_changed(kbdev);
-	}
-
-	if (clear_gpu_fault) {
-		unsigned long flags;
-
-		spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
-		kbase_reg_write(kbdev, GPU_CONTROL_REG(GPU_COMMAND),
-				GPU_COMMAND_CLEAR_FAULT);
-		spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
 	}
 
 	KBASE_KTRACE_ADD(kbdev, CORE_GPU_IRQ_DONE, NULL, val);

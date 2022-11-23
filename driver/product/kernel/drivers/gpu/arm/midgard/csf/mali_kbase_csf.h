@@ -43,6 +43,9 @@
 
 #define FIRMWARE_IDLE_HYSTERESIS_TIME_MS (10) /* Default 10 milliseconds */
 
+/* Idle hysteresis time can be scaled down when GPU sleep feature is used */
+#define FIRMWARE_IDLE_HYSTERESIS_GPU_SLEEP_SCALER (5)
+
 /**
  * enum kbase_csf_event_callback_action - return type for CSF event callbacks.
  *

@@ -63,14 +63,14 @@ struct kbase_hwcnt_backend_csf_if_enable {
 /**
  * struct kbase_hwcnt_backend_csf_if_prfcnt_info - Performance counter
  *                                                 information.
- * @dump_bytes:       Bytes of GPU memory required to perform a performance
- *                    counter dump.
- * @prfcnt_block_size Bytes of each performance counter block.
- * @l2_count:         The MMU L2 cache count.
- * @core_mask:        Shader core mask.
- * @clk_cnt:          Clock domain count in the system.
- * @clearing_samples: Indicates whether counters are cleared after each sample
- *                    is taken.
+ * @dump_bytes:        Bytes of GPU memory required to perform a performance
+ *                     counter dump.
+ * @prfcnt_block_size: Bytes of each performance counter block.
+ * @l2_count:          The MMU L2 cache count.
+ * @core_mask:         Shader core mask.
+ * @clk_cnt:           Clock domain count in the system.
+ * @clearing_samples:  Indicates whether counters are cleared after each sample
+ *                     is taken.
  */
 struct kbase_hwcnt_backend_csf_if_prfcnt_info {
 	size_t dump_bytes;

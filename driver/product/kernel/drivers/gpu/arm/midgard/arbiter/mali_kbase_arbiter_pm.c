@@ -20,15 +20,12 @@
  */
 
 /**
- * @file
  * Mali arbiter power manager state machine and APIs
  */
 
 #include <mali_kbase.h>
 #include <mali_kbase_pm.h>
-#include <mali_kbase_hwaccess_jm.h>
 #include <backend/gpu/mali_kbase_irq_internal.h>
-#include <mali_kbase_hwcnt_context.h>
 #include <backend/gpu/mali_kbase_pm_internal.h>
 #include <tl/mali_kbase_tracepoints.h>
 #include <mali_kbase_gpuprops.h>
@@ -622,6 +619,18 @@ static void kbase_arbiter_pm_vm_gpu_stop(struct kbase_device *kbdev)
 	case KBASE_VM_STATE_SUSPEND_PENDING:
 		/* Suspend finishes with a stop so nothing else to do */
 		break;
+	case KBASE_VM_STATE_INITIALIZING:
+	case KBASE_VM_STATE_STOPPED_GPU_REQUESTED:
+		/*
+		 * Case stop() is received when in a GPU REQUESTED state, it
+		 * means that the granted() was missed so the GPU needs to be
+		 * requested again.
+		 */
+		dev_dbg(kbdev->dev,
+			"GPU stop while already stopped with GPU requested");
+		kbase_arbif_gpu_stopped(kbdev, true);
+		start_request_timer(kbdev);
+		break;
 	default:
 		dev_warn(kbdev->dev, "GPU_STOP when not expected - state %s\n",
 			kbase_arbiter_pm_vm_state_str(arb_vm_state->vm_state));
@@ -659,8 +668,19 @@ static void kbase_gpu_lost(struct kbase_device *kbdev)
 		break;
 	case KBASE_VM_STATE_SUSPENDED:
 	case KBASE_VM_STATE_STOPPED:
-	case KBASE_VM_STATE_STOPPED_GPU_REQUESTED:
 		dev_dbg(kbdev->dev, "GPU lost while already stopped");
+		break;
+	case KBASE_VM_STATE_INITIALIZING:
+	case KBASE_VM_STATE_STOPPED_GPU_REQUESTED:
+		/*
+		 * Case lost() is received when in a GPU REQUESTED state, it
+		 * means that the granted() and stop() were missed so the GPU
+		 * needs to be requested again. Very unlikely to happen.
+		 */
+		dev_dbg(kbdev->dev,
+			"GPU lost while already stopped with GPU requested");
+		kbase_arbif_gpu_request(kbdev);
+		start_request_timer(kbdev);
 		break;
 	case KBASE_VM_STATE_SUSPEND_WAIT_FOR_GRANT:
 		dev_dbg(kbdev->dev, "GPU lost while waiting to suspend");
@@ -1023,8 +1043,8 @@ int kbase_arbiter_pm_ctx_active_handle_suspend(struct kbase_device *kbdev,
 /**
  * kbase_arbiter_pm_update_gpu_freq() - Updates GPU clock frequency received
  * from arbiter.
- * @arb_freq - Pointer to struchture holding GPU clock frequenecy data
- * @freq - New frequency value in KHz
+ * @arb_freq: Pointer to struchture holding GPU clock frequenecy data
+ * @freq: New frequency value in KHz
  */
 void kbase_arbiter_pm_update_gpu_freq(struct kbase_arbiter_freq *arb_freq,
 	uint32_t freq)
@@ -1048,8 +1068,8 @@ void kbase_arbiter_pm_update_gpu_freq(struct kbase_arbiter_freq *arb_freq,
 
 /**
  * enumerate_arb_gpu_clk() - Enumerate a GPU clock on the given index
- * @kbdev - kbase_device pointer
- * @index - GPU clock index
+ * @kbdev: kbase_device pointer
+ * @index: GPU clock index
  *
  * Returns pointer to structure holding GPU clock frequency data reported from
  * arbiter, only index 0 is valid.
@@ -1064,8 +1084,8 @@ static void *enumerate_arb_gpu_clk(struct kbase_device *kbdev,
 
 /**
  * get_arb_gpu_clk_rate() - Get the current rate of GPU clock frequency value
- * @kbdev - kbase_device pointer
- * @index - GPU clock index
+ * @kbdev: kbase_device pointer
+ * @index: GPU clock index
  *
  * Returns the GPU clock frequency value saved when gpu is granted from arbiter
  */
@@ -1085,9 +1105,9 @@ static unsigned long get_arb_gpu_clk_rate(struct kbase_device *kbdev,
 
 /**
  * arb_gpu_clk_notifier_register() - Register a clock rate change notifier.
- * @kbdev          - kbase_device pointer
- * @gpu_clk_handle - Handle unique to the enumerated GPU clock
- * @nb             - notifier block containing the callback function pointer
+ * @kbdev:           kbase_device pointer
+ * @gpu_clk_handle:  Handle unique to the enumerated GPU clock
+ * @nb:              notifier block containing the callback function pointer
  *
  * Returns 0 on success, negative error code otherwise.
  *
@@ -1111,9 +1131,9 @@ static int arb_gpu_clk_notifier_register(struct kbase_device *kbdev,
 
 /**
  * gpu_clk_notifier_unregister() - Unregister clock rate change notifier
- * @kbdev          - kbase_device pointer
- * @gpu_clk_handle - Handle unique to the enumerated GPU clock
- * @nb             - notifier block containing the callback function pointer
+ * @kbdev:           kbase_device pointer
+ * @gpu_clk_handle:  Handle unique to the enumerated GPU clock
+ * @nb:              notifier block containing the callback function pointer
  *
  * This function pointer is used to unregister a callback function that
  * was previously registered to get notified of a frequency change of the

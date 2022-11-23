@@ -19,12 +19,13 @@
  *
  */
 
+#include <device/mali_kbase_device.h>
 #include <linux/bitops.h>
 #include <mali_kbase.h>
+#include <mali_kbase_ctx_sched.h>
 #include <mali_kbase_mem.h>
 #include <mmu/mali_kbase_mmu_hw.h>
 #include <tl/mali_kbase_tracepoints.h>
-#include <device/mali_kbase_device.h>
 
 /**
  * lock_region() - Generate lockaddr to lock memory region in MMU
@@ -171,18 +172,26 @@ void kbase_mmu_hw_configure(struct kbase_device *kbdev, struct kbase_as *as)
 
 int kbase_mmu_hw_do_operation(struct kbase_device *kbdev, struct kbase_as *as,
 		u64 vpfn, u32 nr, u32 op,
-		unsigned int handling_irq)
+		unsigned int handling_irq,
+		u32 kctx_id)
 {
 	int ret;
+	u64 lock_addr = 0x0;
 
 	lockdep_assert_held(&kbdev->mmu_hw_mutex);
 
 	if (op == AS_COMMAND_UNLOCK) {
 		/* Unlock doesn't require a lock first */
 		ret = write_cmd(kbdev, as->number, AS_COMMAND_UNLOCK);
-	} else {
-		u64 lock_addr;
 
+		if (!ret) {
+			/* read MMU_AS_CONTROL.LOCKADDR register */
+			lock_addr |= (u64)kbase_reg_read(kbdev,
+				MMU_AS_REG(as->number, AS_LOCKADDR_HI)) << 32;
+			lock_addr |= (u64)kbase_reg_read(kbdev,
+				MMU_AS_REG(as->number, AS_LOCKADDR_LO));
+		}
+	} else {
 		ret = lock_region(vpfn, nr, &lock_addr);
 
 		if (!ret) {
@@ -201,6 +210,15 @@ int kbase_mmu_hw_do_operation(struct kbase_device *kbdev, struct kbase_as *as,
 			/* Wait for the flush to complete */
 			ret = wait_ready(kbdev, as->number);
 		}
+	}
+
+	/* MMU command instrumentation */
+	if (!ret) {
+		u64 lock_addr_base = AS_LOCKADDR_LOCKADDR_BASE_GET(lock_addr);
+		u32 lock_addr_size = AS_LOCKADDR_LOCKADDR_SIZE_GET(lock_addr);
+
+		KBASE_TLSTREAM_AUX_MMU_COMMAND(kbdev, kctx_id, op, 0,
+										lock_addr_base, lock_addr_size);
 	}
 
 	return ret;
